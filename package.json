@@ -1,0 +1,46 @@
+{
+  "name": "@glimacode/scoped-authz",
+  "version": "0.1.0",
+  "description": "Role-and-scope authorization with a revocation delay you choose, rather than one your token lifetime chooses for you.",
+  "keywords": [
+    "authorization",
+    "rbac",
+    "multi-tenant",
+    "scope",
+    "revocation",
+    "typescript"
+  ],
+  "homepage": "https://github.com/GlimaCode/scoped-authz#readme",
+  "bugs": "https://github.com/GlimaCode/scoped-authz/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GlimaCode/scoped-authz.git"
+  },
+  "license": "MIT",
+  "author": "GlimaCode (https://glimacode.com)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node scripts/run-tests.mjs",
+    "prepack": "npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.9.3"
+  }
+}
