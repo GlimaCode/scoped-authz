@@ -1,4 +1,5 @@
 export { authorizeScope, authorizeScopes, governableScopes } from "./authorize.js";
+export type { ScopeNarrowing } from "./authorize.js";
 export { Guard } from "./guard.js";
 export { RevocationChecker } from "./revocation.js";
 export { DEFAULT_MAX_ENTRIES, DEFAULT_TTL_MS, ScopeResolver } from "./scopeResolver.js";

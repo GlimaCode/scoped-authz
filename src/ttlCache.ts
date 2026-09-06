@@ -6,14 +6,32 @@ import type { Clock } from "./types.js";
  *
  * This is not here to make things fast. It is here so that the delay between
  * revoking someone's authority and that revocation taking effect is a number
- * somebody chose, wrote down, and can test. Both caches in this library are
- * given the SAME ttl by default for exactly that reason: one number to reason
- * about instead of two that drift apart.
+ * somebody chose, wrote down, and can test. Both users of this cache are given
+ * the SAME ttl by default for exactly that reason: one number to reason about
+ * instead of two that drift apart.
  *
  * Eviction is wholesale. An LRU would be kinder to the hit rate and would add
  * a second data structure, a second set of invariants and a second thing to
  * get wrong for a cache whose miss path is a single indexed read. Clearing it
  * costs a burst of misses and cannot leak.
+ *
+ * ── NOTHING IN HERE IS PERMANENT ──────────────────────────────────────────
+ *
+ * Read that eviction sentence as a hard rule, because an earlier version of
+ * this file broke it by accident. It had a `keepIf` predicate on `get`, so a
+ * caller could ask for an entry to survive expiry, and RevocationChecker used
+ * it to make a known revocation permanent. It was not permanent: `set` clears
+ * the whole map on overflow and knows nothing about anybody's predicate, so
+ * after enough distinct keys the "permanent" entry was gone and the next read
+ * answered from a store whose row may since have been swept. Measured at the
+ * shipped defaults with the clock frozen, a revoked token un-revoked itself
+ * after 5,000 unrelated lookups. The test suite passed throughout, because it
+ * only ever advanced the clock and never applied pressure.
+ *
+ * So `keepIf` is gone rather than documented. Anything that must outlive
+ * eviction does not belong in a cache — see the separate set in revocation.ts.
+ * If you are tempted to add an escape hatch here, this paragraph is the reason
+ * not to.
  */
 export class TtlCache<V> {
   readonly #entries = new Map<string, { value: V; at: number }>();
@@ -34,21 +52,10 @@ export class TtlCache<V> {
     this.#now = options.now;
   }
 
-  /**
-   * The cached value, or undefined if absent or too old.
-   *
-   * `keepIf` is the escape hatch for an answer that must never be walked back
-   * by expiry: revocation uses it so that a token known to be revoked stays
-   * revoked in this process regardless of the clock. See revocation.ts.
-   */
-  get(key: string, keepIf?: (value: V) => boolean): V | undefined {
+  /** The cached value, or undefined if absent or older than the ttl. */
+  get(key: string): V | undefined {
     const hit = this.#entries.get(key);
-    if (!hit) {
-      this.#misses += 1;
-      return undefined;
-    }
-    const fresh = this.#now() - hit.at < this.#ttlMs;
-    if (fresh || keepIf?.(hit.value)) {
+    if (hit && this.#now() - hit.at < this.#ttlMs) {
       this.#hits += 1;
       return hit.value;
     }

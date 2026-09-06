@@ -89,11 +89,35 @@ test("a bulk action over no targets is refused, and an owner still passes by rol
   assert.equal(authorizeScopes(null, northAndSouth, ["north"]).allowed, false);
 });
 
+test("a role the kernel does not recognise is refused, not treated as a scoped admin", () => {
+  // The actor comes out of a database column or a token claim, so at runtime
+  // its role is whatever was written there, whatever the type says. Falling
+  // through to the scope test would turn a typo in a seed script into an
+  // authority grant.
+  const typo = { id: "u-x", role: "scoped_admin" } as unknown as Actor;
+  assert.deepEqual(authorizeScope(typo, northAndSouth, "north"), {
+    allowed: false,
+    reason: "unknown-role",
+  });
+  assert.deepEqual(authorizeScopes(typo, northAndSouth, ["north"]), {
+    allowed: false,
+    reason: "unknown-role",
+  });
+  assert.deepEqual(governableScopes(typo, northAndSouth), { narrow: true, scopes: [] });
+
+  const empty = { id: "u-y", role: "" } as unknown as Actor;
+  assert.equal(authorizeScope(empty, northAndSouth, "north").allowed, false);
+});
+
 test("narrowing a query distinguishes do-not-narrow from narrow-to-nothing", () => {
-  // null and [] are the two answers most easily conflated, and conflating them
-  // gives you either a leak or a blank screen. Different types, on purpose.
-  assert.equal(governableScopes(owner, NO_SCOPE), null);
-  assert.deepEqual(governableScopes(member, northAndSouth), []);
-  assert.deepEqual(governableScopes(null, northAndSouth), []);
-  assert.deepEqual([...(governableScopes(admin, northAndSouth) ?? [])].sort(), ["north", "south"]);
+  // The two answers most easily conflated. Conflating them gives you either a
+  // leak or a blank screen, so neither is falsy and `?? []` is not available.
+  assert.deepEqual(governableScopes(owner, NO_SCOPE), { narrow: false });
+  assert.deepEqual(governableScopes(member, northAndSouth), { narrow: true, scopes: [] });
+  assert.deepEqual(governableScopes(null, northAndSouth), { narrow: true, scopes: [] });
+
+  const narrowing = governableScopes(admin, northAndSouth);
+  assert.equal(narrowing.narrow, true);
+  // Reading .scopes requires having read .narrow first — that is the point.
+  assert.deepEqual(narrowing.narrow ? [...narrowing.scopes].sort() : null, ["north", "south"]);
 });

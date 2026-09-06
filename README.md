@@ -6,9 +6,9 @@ Role-and-scope authorization for systems where some administrators govern
 everything and others govern only part of it — a department, a region, a
 tenant, a workspace.
 
-Zero runtime dependencies. TypeScript, Node 20+, about 300 lines of source and
-32 tests. It plugs into whatever you already store users in: you implement two
-one-method interfaces, it owns the decision.
+Zero runtime dependencies. TypeScript, Node 20+. 287 lines of code, rather more
+of commentary, and 44 tests. It plugs into whatever you already store users in:
+you implement two one-method interfaces, it owns the decision.
 
 ```bash
 npm install @glimacode/scoped-authz
@@ -18,8 +18,8 @@ npm install @glimacode/scoped-authz
 
 ## The problem it solves
 
-Scoped administration looks trivial and has three failure modes that are all
-quiet — no crash, no error log, just the wrong answer.
+Scoped administration looks trivial and fails in ways that are all quiet — no
+crash, no error log, just the wrong answer.
 
 ```ts
 import { Guard, ScopeResolver, RevocationChecker, authorizeScope } from "@glimacode/scoped-authz";
@@ -88,11 +88,24 @@ A scoped-admin with no rows is refused everywhere. That is the whole rule.
 Both caches take the **same** TTL by default (15s). Two caches with two TTLs
 means two answers to *"how stale can this be"*, and nobody remembers both.
 
-One asymmetry, on purpose: **a cached permit expires; a cached refusal does
-not.** Revocation is monotonic — a revoked token is never un-revoked — so
-re-reading a known refusal buys nothing and risks answering "allowed" if the
-row has been swept or the read fails. A stale permit is dangerous. A stale
-refusal is not.
+One asymmetry, on purpose: **a permit expires; a known revocation does not.**
+Revocation is monotonic — a revoked token is never un-revoked — so re-reading a
+known refusal buys nothing and risks answering "allowed" if the row has been
+swept or the read fails. A stale permit is dangerous. A stale refusal is not.
+
+Revocations therefore do not live in the cache at all. They live in a plain Set
+that eviction never touches, and this is worth a paragraph because the first
+version got it wrong in a way the tests did not catch. Refusals were kept in the
+cache behind a "don't expire this one" predicate, which survived the clock and
+not eviction: the cache clears wholesale when it fills. At the shipped defaults,
+with the clock frozen, a revoked token un-revoked itself after 5,000 unrelated
+lookups. Every test passed, because every test advanced the clock and none of
+them filled the cache.
+
+That Set is bounded by `maxKnown` (default 100,000, and it only ever holds
+tokens actually revoked). At the bound it stops *accepting* rather than
+dropping: overflow degrades to "ask the store every time", never to "this token
+was never revoked", and `stats().knownRevokedOverflowed` says it happened.
 
 The clock is injectable, so the envelope is asserted in tests rather than
 advertised in a comment:
@@ -125,15 +138,23 @@ one thing it should be is ignorant of it.
 | `RevocationChecker` | Is this token still allowed to act. |
 | `authorizeScope` | One target. Role first, then membership. |
 | `authorizeScopes` | Several targets, all-or-nothing. |
-| `governableScopes` | For narrowing a query: `null` = do not narrow, `[]` = no rows. |
-| `TtlCache` | The bounded cache, exported because the envelope is yours to reuse. |
+| `governableScopes` | For narrowing a query: `{narrow:false}` = do not narrow, `{narrow:true,scopes}` = narrow to these. |
+| `TtlCache` | The bounded cache, exported because the envelope is yours to reuse. Nothing in it is permanent — see decision 4. |
 
 ### `governableScopes` returns two different kinds of nothing
 
-`null` means *do not narrow this query* — the actor is an owner. `[]` means
-*narrow it to nothing* — the actor sees no rows at all. Conflate them and you
-get either a leak or a blank screen, so they are different types and the
-compiler makes you say which you meant.
+`{ narrow: false }` means *do not narrow this query* — the actor is an owner.
+`{ narrow: true, scopes: [] }` means *narrow it to nothing* — the actor sees no
+rows at all. Conflate them and you get either a leak or a blank screen.
+
+This returned `readonly Scope[] | null` at first, and this section claimed the
+compiler made you say which you meant. It did not: `null` is falsy, so
+`governableScopes(...) ?? []` type-checked perfectly and silently turned "show
+everything" into "show nothing" — the exact conflation, in the idiom a reader
+reaches for first. One of this library's own tests was written that way.
+
+A discriminated union has no falsy member. There is no `??` to reach for, and
+`.scopes` cannot be read until `.narrow` has been. Now the claim is true.
 
 ---
 
@@ -155,17 +176,22 @@ the resolved set down removes that failure mode rather than documenting it.
 npm test        # tsc, then node --test
 ```
 
-32 tests, no framework, no mocks library — a hand-advanced clock and two
-counting fakes. Each of the three invariants above was verified by breaking it
-on purpose and checking that the right tests, and only those, went red:
+44 tests, no framework, no mocks library — a hand-advanced clock and two
+counting fakes. Each invariant above was verified by breaking it on purpose and
+checking that the right tests, and only those, went red:
 
 | Mutation | Tests that caught it |
 |---|---|
 | Scope checked before role | 3 |
-| Cached refusals allowed to expire | 1 |
 | Store consulted for every role | 3 |
+| Refusals put back in the evictable cache | 5 |
+| Cached refusals allowed to expire | 1 |
 
-A test suite that has never been seen to fail is a claim, not evidence.
+A test suite that has never been seen to fail is a claim, not evidence — and
+the fourth row is why. It passed for a version of this library whose headline
+guarantee did not hold, because it only ever tested the clock. The third row
+is the test that was missing: fill the cache, never touch the clock, sweep the
+row, and check the token is still revoked.
 
 ---
 

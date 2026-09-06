@@ -69,9 +69,15 @@ export type Clock = () => number;
 /** Why a request was refused. Never shown to the actor; logged, and asserted on. */
 export type Denial =
   | "unauthenticated"
+  /** A token that WAS valid and has been killed. Distinct from having none:
+   *  "someone is still using a revoked session" is worth alerting on, and a
+   *  library whose subject is revocation should be able to say it. */
+  | "session-revoked"
   | "role-has-no-administrative-authority"
   | "scope-not-in-actor-scope"
-  | "no-target-scope";
+  | "no-target-scope"
+  /** A role the kernel does not recognise. Refused rather than guessed. */
+  | "unknown-role";
 
 export type Decision =
   | { readonly allowed: true }

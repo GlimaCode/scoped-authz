@@ -50,11 +50,14 @@ test("resolving once at the edge leaves every gate synchronous", async () => {
   assert.equal(resolved.scopes.has("east"), false);
 });
 
-test("check() refuses a revoked session as unauthenticated", async () => {
+test("check() names a revoked session as revoked, not as unauthenticated", async () => {
+  // Two different events: nobody presented a session, versus a session that was
+  // valid and was killed and is still being used. The second is worth alerting
+  // on, and a library about revocation should be able to say it.
   const { guard } = build({ "u-1": ["north"] }, ["t-1"]);
   assert.deepEqual(await guard.check(admin, "t-1", "north"), {
     allowed: false,
-    reason: "unauthenticated",
+    reason: "session-revoked",
   });
 });
 
@@ -82,6 +85,6 @@ test("revoking mid-session closes the session within the envelope", async () => 
 
   assert.deepEqual(await guard.check(admin, "t-1", "north"), {
     allowed: false,
-    reason: "unauthenticated",
+    reason: "session-revoked",
   });
 });

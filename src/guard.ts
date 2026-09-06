@@ -43,7 +43,7 @@ export class Guard {
   /** Convenience for a one-shot check; prefer resolve() once plus many sync gates. */
   async check(actor: Actor, tokenId: string, target: Scope | null): Promise<Decision> {
     const resolved = await this.resolve(actor, tokenId);
-    if (!resolved) return deny("unauthenticated");
+    if (!resolved) return deny("session-revoked");
     return authorizeScope(resolved.actor, resolved.scopes, target);
   }
 }

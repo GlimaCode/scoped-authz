@@ -41,6 +41,12 @@ export function authorizeScope(
   if (!actor) return deny("unauthenticated");
   if (actor.role === "owner") return ALLOW;
   if (actor.role === "member") return deny("role-has-no-administrative-authority");
+  // An allow-list, not an else. TypeScript says Role is one of three, and the
+  // actor on a real request came out of a database column or a token claim, so
+  // at runtime it is whatever was written there. Reaching the scope test by
+  // falling through means an unrecognised role is silently treated as a scoped
+  // admin, and a typo in a seed script becomes an authority grant.
+  if (actor.role !== "scoped-admin") return deny("unknown-role");
 
   if (target === null || target === undefined || target === "") return deny("no-target-scope");
   if (!scopes.has(target)) return deny("scope-not-in-actor-scope");
@@ -65,6 +71,7 @@ export function authorizeScopes(
   if (!actor) return deny("unauthenticated");
   if (actor.role === "owner") return ALLOW;
   if (actor.role === "member") return deny("role-has-no-administrative-authority");
+  if (actor.role !== "scoped-admin") return deny("unknown-role");
   if (targets.length === 0) return deny("no-target-scope");
 
   for (const target of targets) {
@@ -75,20 +82,40 @@ export function authorizeScopes(
 }
 
 /**
- * The scopes an actor may govern, for narrowing a query rather than refusing a
- * request.
+ * For narrowing a query rather than refusing a request.
  *
- * Returns null for an owner — meaning "do not narrow", which is different from
- * an empty array meaning "narrow to nothing, this actor sees no rows". Callers
- * that conflate the two produce either a leak or an empty screen, so the two
- * are different types and the compiler makes you say which you meant.
+ * There are two different kinds of nothing here, and conflating them gives you
+ * either a leak or a blank screen:
+ *
+ *   { narrow: false }             an owner — do not narrow, they see everything
+ *   { narrow: true, scopes: [] }  narrow to nothing — this actor sees no rows
+ *
+ * This returned a `readonly Scope[] | null` at first, and the README claimed
+ * the compiler made you say which you meant. It did not. `null` is falsy and
+ * an array is not, so `governableScopes(...) ?? []` type-checks perfectly and
+ * silently turns "show everything" into "show nothing" — the exact conflation
+ * the type was supposed to prevent, in the idiom a reader is most likely to
+ * reach for. One of this library's own tests was written that way.
+ *
+ * A discriminated union has no falsy member, so there is no `??` to reach for
+ * and the narrowing has to be read before the array can be. That is the claim
+ * actually being enforced.
  */
+export type ScopeNarrowing =
+  | { readonly narrow: false }
+  | { readonly narrow: true; readonly scopes: readonly Scope[] };
+
+const NARROW_TO_NOTHING: ScopeNarrowing = Object.freeze({ narrow: true as const, scopes: Object.freeze([]) });
+const DO_NOT_NARROW: ScopeNarrowing = Object.freeze({ narrow: false as const });
+
 export function governableScopes(
   actor: Actor | null | undefined,
   scopes: ReadonlySet<Scope>,
-): readonly Scope[] | null {
-  if (!actor) return [];
-  if (actor.role === "owner") return null;
-  if (actor.role === "member") return [];
-  return [...scopes];
+): ScopeNarrowing {
+  if (!actor) return NARROW_TO_NOTHING;
+  if (actor.role === "owner") return DO_NOT_NARROW;
+  // Same allow-list rule as authorizeScope: an unrecognised role narrows to
+  // nothing rather than inheriting whatever set it was handed.
+  if (actor.role !== "scoped-admin") return NARROW_TO_NOTHING;
+  return { narrow: true, scopes: [...scopes] };
 }
